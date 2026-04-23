@@ -1,54 +1,46 @@
-
 import streamlit as st
 import yfinance as yf
 import pandas as pd
-import time
 
-st.set_page_config(page_title="Dashboard Portfolio", layout="wide")
+st.set_page_config(page_title="Portfolio", layout="wide")
 
-st.title("📊 Dashboard Portfolio (Simple & Propre)")
+st.title("📊 Mon Portefeuille")
 
-# Mapping noms -> tickers
-mapping = {
-    "NVIDIA": "NVDA",
-    "ASML": "ASML",
-    "TSMC": "TSM",
-    "MICROSOFT": "MSFT",
-    "APPLE": "AAPL",
-    "META": "META",
-    "MSCI WORLD": "IWDA.AS",
-    "CW8": "CW8.PA",
-    "GOLD": "GLD",
-    "BIGBEAR.AI": "BBAI",
-    "IONQ": "IONQ",
-    "QUANTUM EMOTION": "QNC.V",
-    "WESTERN DIGITAL": "WDC",
-    "EURO STOXX BANKS": "BNK.PA"
-}
+# =========================
+# TABLEAU MODIFIABLE
+# =========================
 
-def convert(name):
-    name = str(name).upper()
-    for k in mapping:
-        if k in name:
-            return mapping[k]
-    return name
+st.sidebar.header("💼 Ton portefeuille")
 
-# Tableau éditable
-st.sidebar.header("💼 Ton Portefeuille")
-
-data_init = pd.DataFrame({
+df = pd.DataFrame({
     "Nom": ["NVIDIA", "ASML", "MSCI WORLD"],
     "Montant (€)": [1000, 800, 2000],
     "Performance (%)": [25, -10, 5]
 })
 
-df = st.sidebar.data_editor(
-    data_init,
-    num_rows="dynamic",
-    use_container_width=True
-)
+df = st.sidebar.data_editor(df, num_rows="dynamic")
 
-# Conversion positions
+# =========================
+# MAPPING
+# =========================
+
+mapping = {
+    "NVIDIA": "NVDA",
+    "ASML": "ASML",
+    "TSMC": "TSM",
+    "MSCI WORLD": "IWDA.AS",
+}
+
+def get_ticker(name):
+    for k in mapping:
+        if k in name.upper():
+            return mapping[k]
+    return name
+
+# =========================
+# CONVERSION
+# =========================
+
 positions = []
 
 for _, row in df.iterrows():
@@ -56,91 +48,68 @@ for _, row in df.iterrows():
         nom = row["Nom"]
         montant = float(row["Montant (€)"])
         perf = float(row["Performance (%)"])
-        ticker = convert(nom)
+        ticker = get_ticker(nom)
 
         positions.append((nom, ticker, montant, perf))
     except:
         pass
 
-# Analyse simple
-st.subheader("📊 Analyse")
+# =========================
+# GRAPHIQUE PORTEFEUILLE
+# =========================
 
-results = []
+st.subheader("📈 Évolution portefeuille")
+
+data = pd.DataFrame()
 
 for nom, ticker, montant, perf in positions:
     try:
-        hist = yf.Ticker(ticker).history(period="5d")
-        perf_court = (hist["Close"].iloc[-1] / hist["Close"].iloc[0] - 1) * 100
+        hist = yf.Ticker(ticker).history(period="1mo")
+        hist["value"] = hist["Close"] / hist["Close"].iloc[0] * montant
 
-        if perf_court > 3:
-            signal = "🔥 Fort"
-        elif perf_court > 0:
-            signal = "📈 Positif"
+        if data.empty:
+            data = hist[["value"]]
         else:
-            signal = "⚠️ Faible"
-
-        results.append((nom, montant, perf, round(perf_court,2), signal))
-        time.sleep(0.3)
-
+            data = data.join(hist["value"], how="outer", rsuffix="_"+ticker)
     except:
-        results.append((nom, montant, perf, 0, "Erreur"))
+        pass
 
-for r in results:
-    st.write(f"{r[0]} | {r[1]}€ | Perf: {r[2]}% | Momentum: {r[3]}% → {r[4]}")
+if not data.empty:
+    data = data.fillna(method="ffill")
+    data["total"] = data.sum(axis=1)
+    st.line_chart(data["total"])
 
-# Graphique portefeuille
-st.subheader("📈 Évolution du portefeuille")
+# =========================
+# GRAPHIQUE PAR ACTION
+# =========================
 
-@st.cache_data(ttl=300)
-def portfolio_history(positions):
-    df_all = pd.DataFrame()
-
-    for nom, ticker, montant, perf in positions:
-        try:
-            hist = yf.Ticker(ticker).history(period="1mo")
-            hist["value"] = hist["Close"] / hist["Close"].iloc[0] * montant
-
-            if df_all.empty:
-                df_all = hist[["value"]]
-            else:
-                df_all = df_all.join(hist["value"], how="outer", rsuffix="_"+ticker)
-
-        except:
-            pass
-
-    df_all = df_all.fillna(method="ffill")
-    df_all["total"] = df_all.sum(axis=1)
-
-    return df_all
-
-if positions:
-    df_port = portfolio_history(positions)
-    st.line_chart(df_port["total"])
-
-# Graphique par action
 st.subheader("📊 Performance par action")
 
-data_perf = {}
+perf_dict = {}
 
 for nom, ticker, montant, perf in positions:
     try:
         hist = yf.Ticker(ticker).history(period="1mo")
         variation = (hist["Close"].iloc[-1] / hist["Close"].iloc[0] - 1) * 100
-        data_perf[nom] = round(variation, 2)
+        perf_dict[nom] = variation
     except:
-        data_perf[nom] = 0
+        perf_dict[nom] = 0
 
-df_perf = pd.DataFrame.from_dict(data_perf, orient="index", columns=["Perf %"])
+df_perf = pd.DataFrame.from_dict(perf_dict, orient="index", columns=["Perf %"])
+
 st.bar_chart(df_perf)
 
-# Score portefeuille
-st.subheader("🧠 Score global")
+# =========================
+# SCORE
+# =========================
+
+st.subheader("🧠 Score portefeuille")
 
 total = sum([p[2] for p in positions])
-score = 0
 
+score = 0
 for nom, ticker, montant, perf in positions:
     poids = montant / total if total else 0
     score += poids * perf
 
-st.metric("Performance pondérée (%)", round(score,2))
+st.metric("Performance globale (%)", round(score,2))
